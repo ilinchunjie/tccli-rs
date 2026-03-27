@@ -48,15 +48,6 @@ struct PurgePathCacheArgs {
     #[arg(
         long,
         required = true,
-        value_name = "REGION",
-        value_parser = validate_region,
-        help = "Tencent Cloud region, for example ap-shanghai"
-    )]
-    region: String,
-
-    #[arg(
-        long,
-        required = true,
         num_args = 1..,
         value_name = "URL",
         value_parser = validate_url_with_scheme,
