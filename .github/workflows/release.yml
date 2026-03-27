@@ -58,31 +58,36 @@ jobs:
             runner: macos-latest
             target: x86_64-apple-darwin
             binary_name: tccli-rs
-            asset_name: tccli-rs-darwin-amd64.tar.gz
+            bundle_name: tccli-rs-darwin-amd64
+            transfer_name: tccli-rs-darwin-amd64.tar.gz
             use_cross: false
           - label: darwin-arm64
             runner: macos-latest
             target: aarch64-apple-darwin
             binary_name: tccli-rs
-            asset_name: tccli-rs-darwin-arm64.tar.gz
+            bundle_name: tccli-rs-darwin-arm64
+            transfer_name: tccli-rs-darwin-arm64.tar.gz
             use_cross: false
           - label: linux-amd64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             binary_name: tccli-rs
-            asset_name: tccli-rs-linux-amd64.tar.gz
+            bundle_name: tccli-rs-linux-amd64
+            transfer_name: tccli-rs-linux-amd64.tar.gz
             use_cross: true
           - label: linux-arm64
             runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             binary_name: tccli-rs
-            asset_name: tccli-rs-linux-arm64.tar.gz
+            bundle_name: tccli-rs-linux-arm64
+            transfer_name: tccli-rs-linux-arm64.tar.gz
             use_cross: true
           - label: windows-amd64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             binary_name: tccli-rs.exe
-            asset_name: tccli-rs-windows-amd64.zip
+            bundle_name: tccli-windows-amd64.exe
+            transfer_name: tccli-windows-amd64.zip
             use_cross: false
     steps:
       - name: Checkout repository
@@ -110,27 +115,65 @@ jobs:
         if: ${{ matrix.use_cross }}
         run: cross build --release --locked --target ${{ matrix.target }}
 
-      - name: Package Unix binary
-        if: runner.os != 'Windows'
+      - name: Prepare Unix transfer artifact
+        if: startsWith(github.ref, 'refs/tags/') && runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.asset_name }}" "${{ matrix.binary_name }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.bundle_name }}"
+          chmod 755 "dist/${{ matrix.bundle_name }}"
+          tar -C dist -czf "dist/${{ matrix.transfer_name }}" "${{ matrix.bundle_name }}"
 
-      - name: Package Windows binary
-        if: runner.os == 'Windows'
+      - name: Prepare Windows transfer artifact
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           $binary = Join-Path -Path "target\${{ matrix.target }}\release" -ChildPath "${{ matrix.binary_name }}"
-          $archive = Join-Path -Path "dist" -ChildPath "${{ matrix.asset_name }}"
-          Compress-Archive -Path $binary -DestinationPath $archive -Force
+          $renamedBinary = Join-Path -Path "dist" -ChildPath "${{ matrix.bundle_name }}"
+          $archive = Join-Path -Path "dist" -ChildPath "${{ matrix.transfer_name }}"
+          Copy-Item -Path $binary -Destination $renamedBinary -Force
+          Compress-Archive -Path $renamedBinary -DestinationPath $archive -Force
 
-      - name: Upload release asset
+      - name: Upload transfer artifact
         if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binary-${{ matrix.label }}
+          path: dist/${{ matrix.transfer_name }}
+          if-no-files-found: error
+
+  bundle_release:
+    name: Bundle release archive
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - create_release
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download transfer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-binary-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assemble release bundle
+        shell: bash
+        run: |
+          mkdir -p bundle dist
+          find artifacts -type f -name '*.tar.gz' -print0 | while IFS= read -r -d '' archive; do
+            tar -xzf "$archive" -C bundle
+          done
+          find artifacts -type f -name '*.zip' -print0 | while IFS= read -r -d '' archive; do
+            unzip -j "$archive" -d bundle
+          done
+          zip -j "dist/tccli-rs-${{ github.ref_name }}.zip" bundle/*
+
+      - name: Upload bundled release asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: dist/${{ matrix.asset_name }}
+          files: dist/tccli-rs-${{ github.ref_name }}.zip
           fail_on_unmatched_files: true
           overwrite_files: true
