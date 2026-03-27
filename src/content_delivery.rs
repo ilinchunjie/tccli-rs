@@ -21,7 +21,6 @@ type HmacSha256 = Hmac<Sha256>;
 pub struct TencentCloudCredentials {
     pub secret_id: String,
     pub secret_key: String,
-    pub region: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,11 +34,24 @@ pub struct PurgePathCacheRequest {
     pub area: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PurgeUrlsCacheRequest {
+    pub urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_encode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PurgePathCacheResponse {
+pub struct PurgeCacheResponse {
     pub task_id: String,
     pub request_id: String,
 }
+
+pub type PurgePathCacheResponse = PurgeCacheResponse;
+pub type PurgeUrlsCacheResponse = PurgeCacheResponse;
 
 #[derive(Debug)]
 pub enum ContentDeliveryError {
@@ -123,7 +135,7 @@ impl fmt::Display for ContentDeliveryError {
                 "failed to parse Tencent Cloud response (status {status}): {source}; body={body}"
             ),
             Self::SerializeRequest(source) => {
-                write!(f, "failed to serialize PurgePathCache request: {source}")
+                write!(f, "failed to serialize Tencent Cloud request: {source}")
             }
             Self::UnexpectedResponse { status, body } => {
                 write!(
@@ -158,12 +170,43 @@ pub fn purge_path_cache(
     purge_path_cache_with_timestamp(&client, credentials, request, timestamp)
 }
 
+pub fn purge_urls_cache(
+    credentials: &TencentCloudCredentials,
+    request: &PurgeUrlsCacheRequest,
+) -> Result<PurgeUrlsCacheResponse, ContentDeliveryError> {
+    let client = Client::builder()
+        .build()
+        .map_err(ContentDeliveryError::Http)?;
+    let timestamp = current_unix_timestamp().map_err(ContentDeliveryError::InvalidTimestamp)?;
+
+    purge_urls_cache_with_timestamp(&client, credentials, request, timestamp)
+}
+
 fn purge_path_cache_with_timestamp(
     client: &Client,
     credentials: &TencentCloudCredentials,
     request: &PurgePathCacheRequest,
     timestamp: u64,
 ) -> Result<PurgePathCacheResponse, ContentDeliveryError> {
+    submit_purge_request(client, credentials, request, "PurgePathCache", timestamp)
+}
+
+fn purge_urls_cache_with_timestamp(
+    client: &Client,
+    credentials: &TencentCloudCredentials,
+    request: &PurgeUrlsCacheRequest,
+    timestamp: u64,
+) -> Result<PurgeUrlsCacheResponse, ContentDeliveryError> {
+    submit_purge_request(client, credentials, request, "PurgeUrlsCache", timestamp)
+}
+
+fn submit_purge_request<T: Serialize>(
+    client: &Client,
+    credentials: &TencentCloudCredentials,
+    request: &T,
+    action: &str,
+    timestamp: u64,
+) -> Result<PurgeCacheResponse, ContentDeliveryError> {
     let payload = serialize_payload(request)?;
     let authorization = build_authorization(credentials, &payload, timestamp)?;
 
@@ -172,13 +215,9 @@ fn purge_path_cache_with_timestamp(
         .header(AUTHORIZATION, authorization)
         .header(CONTENT_TYPE, CONTENT_TYPE_JSON)
         .header(HOST, HOST_NAME)
-        .header("X-TC-Action", "PurgePathCache")
+        .header("X-TC-Action", action)
         .header("X-TC-Timestamp", timestamp.to_string())
         .header("X-TC-Version", VERSION);
-
-    if !credentials.region.trim().is_empty() {
-        request_builder = request_builder.header("X-TC-Region", credentials.region.as_str());
-    }
 
     let response = request_builder
         .body(payload)
@@ -190,7 +229,7 @@ fn purge_path_cache_with_timestamp(
     parse_response(status, &body)
 }
 
-fn parse_response(status: u16, body: &str) -> Result<PurgePathCacheResponse, ContentDeliveryError> {
+fn parse_response(status: u16, body: &str) -> Result<PurgeCacheResponse, ContentDeliveryError> {
     let envelope: TencentCloudEnvelope =
         serde_json::from_str(body).map_err(|source| ContentDeliveryError::ResponseParse {
             status,
@@ -207,7 +246,7 @@ fn parse_response(status: u16, body: &str) -> Result<PurgePathCacheResponse, Con
     }
 
     match (envelope.response.task_id, envelope.response.request_id) {
-        (Some(task_id), Some(request_id)) => Ok(PurgePathCacheResponse {
+        (Some(task_id), Some(request_id)) => Ok(PurgeCacheResponse {
             task_id,
             request_id,
         }),
@@ -218,7 +257,7 @@ fn parse_response(status: u16, body: &str) -> Result<PurgePathCacheResponse, Con
     }
 }
 
-fn serialize_payload(request: &PurgePathCacheRequest) -> Result<String, ContentDeliveryError> {
+fn serialize_payload<T: Serialize>(request: &T) -> Result<String, ContentDeliveryError> {
     serde_json::to_string(request).map_err(ContentDeliveryError::SerializeRequest)
 }
 

@@ -1,7 +1,10 @@
 mod content_delivery;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use content_delivery::{PurgePathCacheRequest, TencentCloudCredentials, purge_path_cache};
+use content_delivery::{
+    PurgePathCacheRequest, PurgeUrlsCacheRequest, TencentCloudCredentials, purge_path_cache,
+    purge_urls_cache,
+};
 use std::process;
 
 #[derive(Debug, Parser)]
@@ -14,8 +17,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// 提交腾讯云 CDN 目录刷新任务
+    /// Submit a Tencent Cloud CDN directory purge task
     PurgePathCache(PurgePathCacheArgs),
+    /// Submit a Tencent Cloud CDN URL purge task
+    PurgeUrlsCache(PurgeUrlsCacheArgs),
 }
 
 #[derive(Debug, Args)]
@@ -25,7 +30,7 @@ struct PurgePathCacheArgs {
         required = true,
         value_name = "SECRET_ID",
         value_parser = validate_secret_id,
-        help = "腾讯云 SecretId"
+        help = "Tencent Cloud SecretId"
     )]
     secret_id: String,
 
@@ -34,7 +39,7 @@ struct PurgePathCacheArgs {
         required = true,
         value_name = "SECRET_KEY",
         value_parser = validate_secret_key,
-        help = "腾讯云 SecretKey"
+        help = "Tencent Cloud SecretKey"
     )]
     secret_key: String,
 
@@ -43,7 +48,7 @@ struct PurgePathCacheArgs {
         required = true,
         value_name = "REGION",
         value_parser = validate_region,
-        help = "腾讯云地域，例如 ap-shanghai"
+        help = "Tencent Cloud region, for example ap-shanghai"
     )]
     region: String,
 
@@ -52,24 +57,64 @@ struct PurgePathCacheArgs {
         required = true,
         num_args = 1..,
         value_name = "URL",
-        value_parser = validate_purge_path,
-        help = "目录列表，需要包含协议头部 http:// 或 https://"
+        value_parser = validate_url_with_scheme,
+        help = "Directory list, each value must start with http:// or https://"
     )]
     paths: Vec<String>,
 
     #[arg(
         long,
         value_enum,
-        help = "刷新类型：flush 刷新产生更新的资源；delete 刷新全部资源"
+        help = "Purge type: flush refreshes updated resources, delete refreshes all resources"
     )]
     flush_type: FlushType,
 
-    #[arg(long, help = "是否对中文字符进行编码后刷新")]
+    #[arg(long, help = "Whether to URL-encode Chinese characters before purging")]
     url_encode: Option<bool>,
 
     #[arg(
         long,
-        help = "刷新区域字符串，示例值 mainland 或 overseas；省略时按域名默认加速区域处理"
+        help = "Purge area, for example mainland or overseas; omitted to follow the domain's default acceleration area"
+    )]
+    area: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PurgeUrlsCacheArgs {
+    #[arg(
+        long,
+        required = true,
+        value_name = "SECRET_ID",
+        value_parser = validate_secret_id,
+        help = "Tencent Cloud SecretId"
+    )]
+    secret_id: String,
+
+    #[arg(
+        long,
+        required = true,
+        value_name = "SECRET_KEY",
+        value_parser = validate_secret_key,
+        help = "Tencent Cloud SecretKey"
+    )]
+    secret_key: String,
+
+    #[arg(
+        long,
+        required = true,
+        num_args = 1..,
+        value_name = "URL",
+        value_parser = validate_url_with_scheme,
+        help = "URL list, each value must start with http:// or https://"
+    )]
+    urls: Vec<String>,
+
+    #[arg(long, help = "Whether to URL-encode Chinese characters before purging")]
+    url_encode: Option<bool>,
+
+    #[arg(
+        long,
+        help = "Purge area, for example mainland or overseas; omitted to follow the domain's default acceleration area"
     )]
     area: Option<String>,
 }
@@ -101,14 +146,15 @@ fn main() {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Commands::PurgePathCache(args) => run_purge_path_cache(args),
+        Commands::PurgeUrlsCache(args) => run_purge_urls_cache(args),
     }
 }
 
-fn validate_purge_path(value: &str) -> Result<String, String> {
+fn validate_url_with_scheme(value: &str) -> Result<String, String> {
     if value.starts_with("http://") || value.starts_with("https://") {
         Ok(value.to_owned())
     } else {
-        Err("path must start with http:// or https://".to_owned())
+        Err("value must start with http:// or https://".to_owned())
     }
 }
 
@@ -128,7 +174,6 @@ fn run_purge_path_cache(args: PurgePathCacheArgs) -> Result<(), String> {
     let credentials = TencentCloudCredentials {
         secret_id: args.secret_id,
         secret_key: args.secret_key,
-        region: args.region,
     };
     let request = PurgePathCacheRequest {
         paths: args.paths,
@@ -140,6 +185,26 @@ fn run_purge_path_cache(args: PurgePathCacheArgs) -> Result<(), String> {
 
     println!(
         "purge-path-cache submitted successfully. task_id={}, request_id={}",
+        response.task_id, response.request_id
+    );
+
+    Ok(())
+}
+
+fn run_purge_urls_cache(args: PurgeUrlsCacheArgs) -> Result<(), String> {
+    let credentials = TencentCloudCredentials {
+        secret_id: args.secret_id,
+        secret_key: args.secret_key,
+    };
+    let request = PurgeUrlsCacheRequest {
+        urls: args.urls,
+        url_encode: args.url_encode,
+        area: args.area,
+    };
+    let response = purge_urls_cache(&credentials, &request).map_err(|err| err.to_string())?;
+
+    println!(
+        "purge-urls-cache submitted successfully. task_id={}, request_id={}",
         response.task_id, response.request_id
     );
 
