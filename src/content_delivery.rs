@@ -44,6 +44,33 @@ pub struct PurgeUrlsCacheRequest {
     pub area: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PushUrlsCacheRequest {
+    pub urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_m3u8: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable_range: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<Vec<HttpHeader>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_encode: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PurgeCacheResponse {
     pub task_id: String,
@@ -52,6 +79,7 @@ pub struct PurgeCacheResponse {
 
 pub type PurgePathCacheResponse = PurgeCacheResponse;
 pub type PurgeUrlsCacheResponse = PurgeCacheResponse;
+pub type PushUrlsCacheResponse = PurgeCacheResponse;
 
 #[derive(Debug)]
 pub enum ContentDeliveryError {
@@ -182,13 +210,25 @@ pub fn purge_urls_cache(
     purge_urls_cache_with_timestamp(&client, credentials, request, timestamp)
 }
 
+pub fn push_urls_cache(
+    credentials: &TencentCloudCredentials,
+    request: &PushUrlsCacheRequest,
+) -> Result<PushUrlsCacheResponse, ContentDeliveryError> {
+    let client = Client::builder()
+        .build()
+        .map_err(ContentDeliveryError::Http)?;
+    let timestamp = current_unix_timestamp().map_err(ContentDeliveryError::InvalidTimestamp)?;
+
+    push_urls_cache_with_timestamp(&client, credentials, request, timestamp)
+}
+
 fn purge_path_cache_with_timestamp(
     client: &Client,
     credentials: &TencentCloudCredentials,
     request: &PurgePathCacheRequest,
     timestamp: u64,
 ) -> Result<PurgePathCacheResponse, ContentDeliveryError> {
-    submit_purge_request(client, credentials, request, "PurgePathCache", timestamp)
+    submit_task_request(client, credentials, request, "PurgePathCache", timestamp)
 }
 
 fn purge_urls_cache_with_timestamp(
@@ -197,10 +237,19 @@ fn purge_urls_cache_with_timestamp(
     request: &PurgeUrlsCacheRequest,
     timestamp: u64,
 ) -> Result<PurgeUrlsCacheResponse, ContentDeliveryError> {
-    submit_purge_request(client, credentials, request, "PurgeUrlsCache", timestamp)
+    submit_task_request(client, credentials, request, "PurgeUrlsCache", timestamp)
 }
 
-fn submit_purge_request<T: Serialize>(
+fn push_urls_cache_with_timestamp(
+    client: &Client,
+    credentials: &TencentCloudCredentials,
+    request: &PushUrlsCacheRequest,
+    timestamp: u64,
+) -> Result<PushUrlsCacheResponse, ContentDeliveryError> {
+    submit_task_request(client, credentials, request, "PushUrlsCache", timestamp)
+}
+
+fn submit_task_request<T: Serialize>(
     client: &Client,
     credentials: &TencentCloudCredentials,
     request: &T,
@@ -210,7 +259,7 @@ fn submit_purge_request<T: Serialize>(
     let payload = serialize_payload(request)?;
     let authorization = build_authorization(credentials, &payload, timestamp)?;
 
-    let mut request_builder = client
+    let request_builder = client
         .post(ENDPOINT)
         .header(AUTHORIZATION, authorization)
         .header(CONTENT_TYPE, CONTENT_TYPE_JSON)
